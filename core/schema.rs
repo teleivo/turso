@@ -3552,6 +3552,23 @@ impl BTreeTable {
         })
     }
 
+    pub(crate) fn primary_key_index_collations(
+        &self,
+    ) -> impl Iterator<Item = Option<CollationSeq>> + '_ {
+        let constraint_columns = self
+            .unique_sets
+            .iter()
+            .find(|unique_set| unique_set.is_primary_key)
+            .map_or(&[][..], |unique_set| unique_set.columns.as_slice());
+        self.primary_key_columns.iter().map(move |(name, _)| {
+            constraint_columns
+                .iter()
+                .find(|column| &column.name == name)
+                .and_then(|column| column.collation)
+                .or_else(|| self.get_column(name)?.1.collation_opt())
+        })
+    }
+
     pub fn from_sql(sql: &str, root_page: i64) -> Result<BTreeTable> {
         let mut parser = Parser::new(sql.as_bytes());
         let cmd = parser.next_cmd()?;
@@ -4578,18 +4595,13 @@ pub(crate) fn validate_generated_expr(expr: &Expr) -> Result<()> {
 /// Peel an optional `COLLATE` wrapper off a PRIMARY KEY / UNIQUE table
 /// constraint column, e.g. `PRIMARY KEY(a COLLATE NOCASE)`, returning the
 /// inner expression and the resolved collation.
-fn constraint_column_collation(expr: &Expr) -> Result<(&Expr, Option<CollationSeq>)> {
+fn constraint_column_collation(expr: &Expr) -> (&Expr, Option<CollationSeq>) {
     match expr {
-        Expr::Collate(inner, collation_name) => {
-            let collation_seq = CollationSeq::new(collation_name.as_str())?;
-            if collation_seq.is_custom() {
-                crate::bail_parse_error!(
-                    "custom collations are not supported in schema definitions"
-                );
-            }
-            Ok((inner.as_ref(), Some(collation_seq)))
-        }
-        _ => Ok((expr, None)),
+        Expr::Collate(inner, collation_name) => (
+            inner.as_ref(),
+            Some(CollationSeq::from_schema(collation_name.as_str())),
+        ),
+        _ => (expr, None),
     }
 }
 
@@ -4647,7 +4659,7 @@ pub fn create_table(tbl_name: &str, body: &CreateTableBody, root_page: i64) -> R
                     }
                     let mut pk_unique_set_columns = Vec::try_with_capacity_ext(columns.len())?;
                     for column in columns {
-                        let (expr, collation) = constraint_column_collation(column.expr.as_ref())?;
+                        let (expr, collation) = constraint_column_collation(column.expr.as_ref());
                         let col_name = match expr {
                             Expr::Id(id) => normalize_ident(id.as_str()),
                             Expr::Literal(Literal::String(value)) => {
@@ -4678,7 +4690,7 @@ pub fn create_table(tbl_name: &str, body: &CreateTableBody, root_page: i64) -> R
                 {
                     let mut unique_columns = Vec::try_with_capacity_ext(columns.len())?;
                     for column in columns {
-                        let (expr, collation) = constraint_column_collation(column.expr.as_ref())?;
+                        let (expr, collation) = constraint_column_collation(column.expr.as_ref());
                         let col_name = match expr {
                             Expr::Id(id) => id.as_str().to_string(),
                             Expr::Literal(Literal::String(value)) => {
@@ -4917,13 +4929,7 @@ pub fn create_table(tbl_name: &str, body: &CreateTableBody, root_page: i64) -> R
                             })?;
                         }
                         ast::ColumnConstraint::Collate { ref collation_name } => {
-                            let collation_seq = CollationSeq::new(collation_name.as_str())?;
-                            if collation_seq.is_custom() {
-                                crate::bail_parse_error!(
-                                    "custom collations are not supported in schema definitions"
-                                );
-                            }
-                            collation = Some(collation_seq);
+                            collation = Some(CollationSeq::from_schema(collation_name.as_str()));
                         }
                         ast::ColumnConstraint::ForeignKey {
                             clause,
@@ -6050,6 +6056,12 @@ impl Index {
     /// Check if this is an expression index.
     pub fn is_expression_index(&self) -> bool {
         self.columns.iter().any(|c| c.expr.is_some())
+    }
+
+    pub fn has_custom_collation(&self) -> bool {
+        self.columns
+            .iter()
+            .any(|c| c.collation.is_some_and(|collation| collation.is_custom()))
     }
 
     /// check if this is special backing_btree index created and managed by custom index_method
