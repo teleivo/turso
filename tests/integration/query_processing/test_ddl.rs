@@ -436,6 +436,21 @@ fn test_unknown_collation_fails_only_writes_that_need_it() -> anyhow::Result<()>
 }
 
 #[test]
+fn test_alter_table_keeps_unknown_collation() -> anyhow::Result<()> {
+    let (_tmp_dir, db) = copy_unknown_collation_fixture()?;
+    let conn = db.connect_limbo();
+
+    conn.execute("ALTER TABLE t1 ADD COLUMN c")?;
+    let rows: Vec<(String,)> = conn.exec_rows("SELECT sql FROM sqlite_schema WHERE name = 't1'");
+    assert_that!(rows[0].0.to_lowercase()).contains("collate reverse");
+
+    conn.execute("ALTER TABLE t3 ADD COLUMN b")?;
+    let rows: Vec<(String,)> = conn.exec_rows("SELECT sql FROM sqlite_schema WHERE name = 't3'");
+    assert_that!(rows[0].0.to_lowercase()).contains("unique (a collate reverse)");
+    Ok(())
+}
+
+#[test]
 fn test_registered_collation_in_schema_is_used_only_outside_indexes() -> anyhow::Result<()> {
     let (_tmp_dir, db) = copy_unknown_collation_fixture()?;
     let conn = db.connect_limbo();

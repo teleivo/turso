@@ -4056,13 +4056,12 @@ fn push_collation(sql: &mut String, collation: Option<CollationSeq>) {
         CollationSeq::Binary => sql.push_str(" COLLATE BINARY"),
         CollationSeq::NoCase => sql.push_str(" COLLATE NOCASE"),
         CollationSeq::Rtrim => sql.push_str(" COLLATE RTRIM"),
-        CollationSeq::Locale(_) => {
+        CollationSeq::Locale(_) | CollationSeq::Custom(_) => {
             sql.push_str(" COLLATE ");
             sql.push_str(&quote_ident(&collation.name()));
         }
-        CollationSeq::Unset | CollationSeq::Custom(_) => {
+        CollationSeq::Unset => {
             // Unset should not be reachable -- ignore it
-            // Custom collation is not allowed in schema definitions
         }
     };
 }
