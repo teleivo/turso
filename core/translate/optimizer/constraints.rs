@@ -1360,7 +1360,12 @@ pub fn constraints_from_where_clause(
             .filter(|term| {
                 let constraint = &cs.constraints[term.constraint_vec_pos];
                 let where_term = &where_clause[constraint.where_clause_pos.0];
-                !expr_uses_custom_collation(&where_term.expr)
+                let column_uses_custom_collation = constraint
+                    .table_col_pos
+                    .and_then(|pos| table_reference.table.columns().get(pos))
+                    .and_then(|column| column.collation_opt())
+                    .is_some_and(|collation| collation.is_custom());
+                !expr_uses_custom_collation(&where_term.expr) && !column_uses_custom_collation
             })
             .collect();
         constraints.push(cs);
