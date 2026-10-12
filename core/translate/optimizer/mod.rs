@@ -108,7 +108,7 @@ impl AvailableIndexes {
                 let mut indexes = resolver.with_schema(jt.database_id, |schema| {
                     schema.indexes.get(jt.table.get_name()).cloned()
                 })?;
-                indexes.retain(|index| !index.has_custom_collation());
+                indexes.retain(|index| !index.has_unregistered_collation(resolver.symbol_table));
                 Some((jt.internal_id, indexes))
             })
             .collect();
@@ -2361,7 +2361,8 @@ fn enforce_indexed_by_hints(
                                 .is_some_and(|indexes| {
                                     indexes.iter().any(|index| {
                                         index.name.eq_ignore_ascii_case(idx_name)
-                                            && index.has_custom_collation()
+                                            && index
+                                                .has_unregistered_collation(resolver.symbol_table)
                                     })
                                 })
                         });

@@ -1487,7 +1487,7 @@ pub fn op_open_read(
                 )
                 .into());
             }
-            let btree_cursor: Box<BTreeCursor> = if table.has_rowid {
+            let mut btree_cursor: Box<BTreeCursor> = if table.has_rowid {
                 BTreeCursor::new_table(
                     pager,
                     maybe_transform_root_page_to_positive(mv_store.as_ref(), *root_page),
@@ -1503,6 +1503,7 @@ pub fn op_open_read(
                 )
                 .into_boxed()
             };
+            resolve_custom_collations(&mut btree_cursor, &program.connection, mv_store.is_some())?;
             let cursor = maybe_promote_to_mvcc_cursor(btree_cursor, MvccCursorType::Table)?;
             cursors
                 .get_mut(*cursor_id)
@@ -1510,12 +1511,13 @@ pub fn op_open_read(
                 .replace(cursor.into_cursor());
         }
         CursorType::BTreeIndex(index) => {
-            let btree_cursor = BTreeCursor::new_index_boxed(
+            let mut btree_cursor = BTreeCursor::new_index_boxed(
                 pager,
                 maybe_transform_root_page_to_positive(mv_store.as_ref(), *root_page),
                 index.as_ref(),
                 num_columns,
             )?;
+            resolve_custom_collations(&mut btree_cursor, &program.connection, mv_store.is_some())?;
             let index_info = match mv_store.as_ref() {
                 Some(mv_store) => {
                     Arc::new(IndexInfo::new_from_index_in(index, mv_store.allocator())?)
@@ -13713,7 +13715,7 @@ pub fn op_open_write(
         };
         if let Some(index) = maybe_index {
             let num_columns = index.columns.len();
-            let btree_cursor = btree_cursor_with_yield_context(
+            let mut btree_cursor = btree_cursor_with_yield_context(
                 BTreeCursor::new_index_boxed(
                     pager,
                     maybe_transform_root_page_to_positive(mv_store.as_ref(), root_page),
@@ -13722,6 +13724,7 @@ pub fn op_open_write(
                 )?,
                 &program.connection,
             );
+            resolve_custom_collations(&mut btree_cursor, &program.connection, mv_store.is_some())?;
             let index_info = Arc::new(if let Some(mv_store) = mv_store.as_ref() {
                 IndexInfo::new_from_index_in(index, mv_store.allocator())?
             } else {
@@ -13750,7 +13753,7 @@ pub fn op_open_write(
                 ),
             };
 
-            let btree_cursor: Box<BTreeCursor> = match cursor_type {
+            let mut btree_cursor: Box<BTreeCursor> = match cursor_type {
                 CursorType::BTreeTable(table_rc) if !table_rc.has_rowid => {
                     btree_cursor_with_yield_context(
                         Box::new(BTreeCursor::new_without_rowid_table(
@@ -13771,6 +13774,7 @@ pub fn op_open_write(
                     &program.connection,
                 ),
             };
+            resolve_custom_collations(&mut btree_cursor, &program.connection, mv_store.is_some())?;
             let cursor = maybe_promote_to_mvcc_cursor(btree_cursor, MvccCursorType::Table)?;
             cursors
                 .get_mut(*cursor_id)
@@ -16142,7 +16146,7 @@ pub fn op_open_ephemeral(
                 _ => unreachable!("This should not have happened"),
             };
 
-            let cursor = if let CursorType::BTreeIndex(index) = cursor_type {
+            let mut cursor = if let CursorType::BTreeIndex(index) = cursor_type {
                 BTreeCursor::new_index(pager.clone(), root_page, index, num_columns)
             } else {
                 Ok(BTreeCursor::new_table(
@@ -16151,6 +16155,7 @@ pub fn op_open_ephemeral(
                     num_columns,
                 ))
             }?;
+            resolve_custom_collations(&mut cursor, &program.connection, false)?;
             *state.active_op_state.open_ephemeral() = OpOpenEphemeralState::Rewind {
                 cursor: Box::new(cursor),
                 temp_file: temp_file.take(),
@@ -16258,7 +16263,7 @@ pub fn op_open_dup(
                 )
                 .into());
             }
-            let cursor: Box<BTreeCursor> = if table.has_rowid {
+            let mut cursor: Box<BTreeCursor> = if table.has_rowid {
                 Box::new(BTreeCursor::new_table(
                     pager,
                     maybe_transform_root_page_to_positive(mv_store.as_ref(), root_page),
@@ -16272,6 +16277,7 @@ pub fn op_open_dup(
                     table.columns().len(),
                 ))
             };
+            resolve_custom_collations(&mut cursor, &program.connection, false)?;
             let cursor = if !is_ephemeral {
                 if let Some(tx_id) = program.connection.get_mv_tx_id() {
                     let mv_store = mv_store
@@ -16314,6 +16320,26 @@ pub fn op_open_dup(
 
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
+}
+
+fn resolve_custom_collations(
+    cursor: &mut BTreeCursor,
+    connection: &Connection,
+    mvcc: bool,
+) -> Result<()> {
+    let Some(index_info) = cursor.index_info.as_mut() else {
+        return Ok(());
+    };
+    if !index_info.has_custom_collation() {
+        return Ok(());
+    }
+    if mvcc {
+        return Err(LimboError::ParseError(
+            "custom collations are not supported in indexes in MVCC mode".to_string(),
+        ));
+    }
+    Arc::make_mut(index_info)
+        .resolve_custom_collations(|collation| connection.get_external_collation(collation))
 }
 
 /// Execute the [Insn::Once] instruction.

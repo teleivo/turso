@@ -965,30 +965,24 @@ fn custom_collations_cover_dotnet_create_collation_cases(
     );
     assert_eq!(min_max, vec![("ALPHA".to_string(), "Gamma".to_string())]);
 
-    let err = conn
-        .execute("CREATE TABLE bad(value TEXT COLLATE dotnet_nocase)")
-        .unwrap_err();
-    assert!(err
-        .to_string()
-        .contains("custom collations are not supported"));
-    let err = conn
-        .execute("CREATE INDEX bad_idx ON names(value COLLATE dotnet_nocase)")
-        .unwrap_err();
-    assert!(err
-        .to_string()
-        .contains("custom collations are not supported"));
-    let err = conn
-        .execute("CREATE TABLE bad(value TEXT, UNIQUE(value COLLATE dotnet_nocase))")
-        .unwrap_err();
-    assert!(err
-        .to_string()
-        .contains("custom collations are not supported"));
-    let err = conn
-        .execute("CREATE TABLE bad(value TEXT, PRIMARY KEY(value COLLATE dotnet_nocase))")
-        .unwrap_err();
-    assert!(err
-        .to_string()
-        .contains("custom collations are not supported"));
+    conn.execute("CREATE TABLE column_collation(value TEXT COLLATE dotnet_nocase)")?;
+    conn.execute("CREATE TABLE unique_collation(value TEXT, UNIQUE(value COLLATE dotnet_nocase))")?;
+    conn.execute(
+        "CREATE TABLE primary_key_collation(value TEXT, PRIMARY KEY(value COLLATE dotnet_nocase))",
+    )?;
+    conn.execute("CREATE INDEX names_idx ON names(value COLLATE dotnet_nocase)")?;
+    let indexed_sql = "SELECT value FROM names INDEXED BY names_idx \
+        WHERE value = 'ALPHA' COLLATE dotnet_nocase ORDER BY value";
+    assert_that!(limbo_exec_rows(
+        &conn,
+        &format!("EXPLAIN QUERY PLAN {indexed_sql}")
+    ))
+    .uses_index("names_idx");
+    let indexed_rows: Vec<(String,)> = conn.exec_rows(indexed_sql);
+    assert_eq!(
+        indexed_rows,
+        vec![("ALPHA".to_string(),), ("alpha".to_string(),)]
+    );
 
     conn.execute("CREATE TABLE left_values(value TEXT)")?;
     conn.execute("CREATE TABLE right_values(value TEXT)")?;

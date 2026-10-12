@@ -347,7 +347,7 @@ impl<A: ConcurrentAllocator> CursorPeek<A> {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub enum MvccCursorType {
     Table,
     Index(Arc<IndexInfo>),

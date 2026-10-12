@@ -300,7 +300,7 @@ pub struct ProgramBuilder {
     free_register_ranges: Vec<Range<usize>>,
     next_free_cursor_id: usize,
     free_cursor_ids: Vec<usize>,
-    custom_key_collation: Option<CollationSeq>,
+    custom_key_collations: Vec<CollationSeq>,
     next_hash_table_id: usize,
     pub table_references: TableReferences,
     /// Current parsing nesting level
@@ -708,7 +708,7 @@ impl ProgramBuilder {
             free_register_ranges: Vec::new(),
             next_free_cursor_id: 0,
             free_cursor_ids: Vec::new(),
-            custom_key_collation: None,
+            custom_key_collations: Vec::new(),
             next_hash_table_id: HASH_TABLE_ID_BASE,
             insns: Vec::with_capacity(opts.approx_num_insns),
             cursor_ref: Vec::with_capacity(opts.num_cursors),
@@ -1152,9 +1152,7 @@ impl ProgramBuilder {
     }
 
     fn _alloc_cursor_id(&mut self, key: Option<CursorKey>, cursor_type: CursorType) -> usize {
-        if self.custom_key_collation.is_none() {
-            self.custom_key_collation = custom_key_collation(&cursor_type);
-        }
+        push_custom_key_collations(&cursor_type, &mut self.custom_key_collations);
         if let Some(cursor) = self.free_cursor_ids.pop() {
             self.cursor_ref[cursor] = (key, cursor_type);
             return cursor;
@@ -2416,13 +2414,8 @@ impl ProgramBuilder {
         change_cnt_on: bool,
         sql: &str,
     ) -> crate::Result<Program> {
-        if let Some(collation) = self.custom_key_collation {
-            match connection.get_external_collation(collation) {
-                Ok(_) => crate::bail_parse_error!(
-                    "custom collations are not supported in indexes or WITHOUT ROWID tables"
-                ),
-                Err(no_such_collation) => return Err(no_such_collation),
-            }
+        for collation in &self.custom_key_collations {
+            connection.get_external_collation(*collation)?;
         }
         for (insn, _) in &self.insns {
             check_custom_collations_registered(insn, &connection)?;
@@ -2433,18 +2426,22 @@ impl ProgramBuilder {
     }
 }
 
-fn custom_key_collation(cursor_type: &CursorType) -> Option<CollationSeq> {
+fn push_custom_key_collations(cursor_type: &CursorType, collations: &mut Vec<CollationSeq>) {
     match cursor_type {
-        CursorType::BTreeIndex(index) => index
-            .columns
-            .iter()
-            .filter_map(|column| column.collation)
-            .find(|collation| collation.is_custom()),
-        CursorType::BTreeTable(table) if !table.has_rowid => table
-            .primary_key_index_collations()
-            .flatten()
-            .find(|collation| collation.is_custom()),
-        _ => None,
+        CursorType::BTreeIndex(index) => collations.extend(
+            index
+                .columns
+                .iter()
+                .filter_map(|column| column.collation)
+                .filter(|collation| collation.is_custom()),
+        ),
+        CursorType::BTreeTable(table) if !table.has_rowid => collations.extend(
+            table
+                .primary_key_index_collations()
+                .flatten()
+                .filter(|collation| collation.is_custom()),
+        ),
+        _ => {}
     }
 }
 

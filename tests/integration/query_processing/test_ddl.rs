@@ -1,4 +1,5 @@
-use crate::common::{rusqlite_integrity_check, ExecRows, TempDatabase};
+use crate::assertions::AssertQueryPlan;
+use crate::common::{limbo_exec_rows, rusqlite_integrity_check, ExecRows, TempDatabase};
 use asserting::prelude::*;
 
 #[turso_macros::test(init_sql = "CREATE TABLE t (a, b);")]
@@ -451,43 +452,59 @@ fn test_alter_table_keeps_unknown_collation() -> anyhow::Result<()> {
 }
 
 #[test]
-fn test_registered_collation_in_schema_is_used_only_outside_indexes() -> anyhow::Result<()> {
-    let (_tmp_dir, db) = copy_unknown_collation_fixture()?;
+fn test_registered_collation_in_schema_is_used_in_indexes() -> anyhow::Result<()> {
+    let (tmp_dir, db) = copy_unknown_collation_fixture()?;
     let conn = db.connect_limbo();
     conn.register_external_collation("reverse".to_string(), 0, reverse_collation, None);
 
-    let rows: Vec<(String,)> = conn.exec_rows("SELECT a FROM t1 ORDER BY a");
-    assert_eq!(rows, vec![("b".to_string(),), ("a".to_string(),)]);
+    conn.execute("INSERT INTO t1 VALUES ('c', 3)")?;
+    conn.execute("INSERT INTO t2 VALUES ('c', 3)")?;
+    conn.execute("INSERT INTO t3 VALUES ('c')")?;
+
+    let ordered_sql = "SELECT a FROM t1 ORDER BY a";
+    assert_that!(limbo_exec_rows(
+        &conn,
+        &format!("EXPLAIN QUERY PLAN {ordered_sql}")
+    ))
+    .uses_index("i1");
+    let rows: Vec<(String,)> = conn.exec_rows(ordered_sql);
+    assert_eq!(
+        rows,
+        vec![("c".to_string(),), ("b".to_string(),), ("a".to_string(),)]
+    );
+    let rows: Vec<(String,)> =
+        conn.exec_rows("SELECT a FROM t2 INDEXED BY i2 WHERE a > 'a' COLLATE reverse");
+    assert_eq!(rows, vec![]);
+    let rows: Vec<(String,)> =
+        conn.exec_rows("SELECT a FROM t2 INDEXED BY i2 WHERE a < 'a' COLLATE reverse");
+    assert_eq!(rows, vec![("c".to_string(),), ("b".to_string(),)]);
     let rows: Vec<(String,)> =
         conn.exec_rows("SELECT x.a FROM t2 x JOIN t1 y ON y.a = x.a ORDER BY x.a");
-    assert_eq!(rows, vec![("a".to_string(),), ("b".to_string(),)]);
-    for sql in [
-        "INSERT INTO t1 VALUES ('c', 3)",
-        "SELECT a FROM t1 UNION SELECT a FROM t1",
-    ] {
-        assert_that!(conn.execute(sql))
-            .is_err()
-            .err()
-            .display_string()
-            .contains("custom collations are not supported in indexes or WITHOUT ROWID tables");
-    }
+    assert_eq!(
+        rows,
+        vec![("a".to_string(),), ("b".to_string(),), ("c".to_string(),)]
+    );
+    let rows: Vec<(String,)> = conn.exec_rows("SELECT a FROM t1 UNION SELECT a FROM t1");
+    assert_eq!(
+        rows,
+        vec![("c".to_string(),), ("b".to_string(),), ("a".to_string(),)]
+    );
+    drop(conn);
+    sqlite_integrity_check_with_reverse(&tmp_dir.path().join("unknown_collation.db"))?;
     Ok(())
 }
 
 #[test]
-fn test_without_rowid_table_with_unknown_collation_cannot_be_used() -> anyhow::Result<()> {
+fn test_without_rowid_table_with_custom_collation_needs_it_registered() -> anyhow::Result<()> {
     let tmp_dir = tempfile::TempDir::new()?;
     let db_path = tmp_dir.path().join("without_rowid.db");
     let sqlite = rusqlite::Connection::open(&db_path)?;
+    sqlite.create_collation("reverse", |left, right| right.cmp(left))?;
     sqlite.execute_batch(
-        "CREATE TABLE w(a TEXT PRIMARY KEY COLLATE nocase, b) WITHOUT ROWID;
+        "CREATE TABLE w(a TEXT PRIMARY KEY COLLATE reverse, b) WITHOUT ROWID;
          INSERT INTO w VALUES ('a', 1), ('b', 2);
-         CREATE TABLE wc(a TEXT, b, PRIMARY KEY(a COLLATE nocase)) WITHOUT ROWID;
-         INSERT INTO wc VALUES ('a', 1), ('b', 2);
-         PRAGMA writable_schema = ON;
-         UPDATE sqlite_schema
-            SET sql = replace(sql, 'nocase', 'reverse')
-          WHERE name IN ('w', 'wc');",
+         CREATE TABLE wc(a TEXT, b, PRIMARY KEY(a COLLATE reverse)) WITHOUT ROWID;
+         INSERT INTO wc VALUES ('a', 1), ('b', 2);",
     )?;
     drop(sqlite);
     let db = TempDatabase::builder().with_db_path(&db_path).build();
@@ -508,12 +525,15 @@ fn test_without_rowid_table_with_unknown_collation_cannot_be_used() -> anyhow::R
 
     conn.register_external_collation("reverse".to_string(), 0, reverse_collation, None);
     for table in ["w", "wc"] {
-        assert_that!(conn.execute(format!("INSERT INTO {table} VALUES ('c', 3)")))
-            .is_err()
-            .err()
-            .display_string()
-            .contains("custom collations are not supported in indexes or WITHOUT ROWID tables");
+        conn.execute(format!("INSERT INTO {table} VALUES ('c', 3)"))?;
+        let rows: Vec<(String,)> = conn.exec_rows(&format!("SELECT a FROM {table}"));
+        assert_eq!(
+            rows,
+            vec![("c".to_string(),), ("b".to_string(),), ("a".to_string(),)]
+        );
     }
+    drop(conn);
+    sqlite_integrity_check_with_reverse(&db_path)?;
     Ok(())
 }
 
@@ -593,6 +613,14 @@ unsafe extern "C" fn reverse_collation(
         std::cmp::Ordering::Equal => 0,
         std::cmp::Ordering::Greater => 1,
     }
+}
+
+fn sqlite_integrity_check_with_reverse(db_path: &std::path::Path) -> anyhow::Result<()> {
+    let sqlite = rusqlite::Connection::open(db_path)?;
+    sqlite.create_collation("reverse", |left, right| right.cmp(left))?;
+    let result: String = sqlite.query_row("PRAGMA integrity_check", [], |row| row.get(0))?;
+    assert_eq!(result, "ok");
+    Ok(())
 }
 
 fn copy_unknown_collation_fixture() -> anyhow::Result<(tempfile::TempDir, TempDatabase)> {

@@ -6057,10 +6057,13 @@ impl Index {
         self.columns.iter().any(|c| c.expr.is_some())
     }
 
-    pub(crate) fn has_custom_collation(&self) -> bool {
+    pub(crate) fn has_unregistered_collation(&self, symbol_table: &SymbolTable) -> bool {
         self.columns
             .iter()
-            .any(|c| c.collation.is_some_and(|collation| collation.is_custom()))
+            .filter_map(|c| c.collation)
+            .any(|collation| {
+                collation.is_custom() && !symbol_table.collations.contains_key(&collation.id())
+            })
     }
 
     /// check if this is special backing_btree index created and managed by custom index_method

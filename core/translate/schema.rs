@@ -904,10 +904,7 @@ fn validate(
 }
 
 fn validate_collation(name: &str, resolver: &Resolver) -> Result<()> {
-    let collation = resolver.resolve_collation(name)?;
-    if collation.is_custom() {
-        bail_parse_error!("custom collations are not supported in schema definitions");
-    }
+    resolver.resolve_collation(name)?;
     Ok(())
 }
 

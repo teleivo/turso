@@ -2504,7 +2504,7 @@ pub type IndexKeyInfo = Vec<KeyInfo>;
 #[cfg(nightly)]
 pub type IndexKeyInfo = Vec<KeyInfo, DynAllocator>;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 /// Metadata about an index, used for handling and comparing index keys.
 ///
 /// This struct provides information about the sorting order of columns,
@@ -2519,6 +2519,9 @@ pub struct IndexInfo {
     pub num_cols: usize,
     /// Indicates whether index rows should be unique.
     pub is_unique: bool,
+    /// The registered compare function of each key column with a custom collation.
+    /// Empty when no key column has one.
+    pub custom_collations: Vec<Option<Arc<crate::function::ExternalCollation>>>,
 }
 
 impl Default for IndexInfo {
@@ -2528,6 +2531,7 @@ impl Default for IndexInfo {
             has_rowid: true,
             num_cols: 1,
             is_unique: false,
+            custom_collations: Vec::new(),
         }
     }
 }
@@ -2591,7 +2595,43 @@ impl IndexInfo {
             has_rowid,
             num_cols,
             is_unique,
+            custom_collations: Vec::new(),
         })
+    }
+
+    pub fn has_custom_collation(&self) -> bool {
+        self.key_info.iter().any(|key| key.collation.is_custom())
+    }
+
+    pub fn resolve_custom_collations(
+        &mut self,
+        mut resolve: impl FnMut(CollationSeq) -> crate::Result<Arc<crate::function::ExternalCollation>>,
+    ) -> crate::Result<()> {
+        let mut custom_collations = Vec::try_with_capacity_ext(self.key_info.len())?;
+        for key in self.key_info.iter() {
+            let callback = if key.collation.is_custom() {
+                Some(resolve(key.collation)?)
+            } else {
+                None
+            };
+            custom_collations.try_push(callback)?;
+        }
+        self.custom_collations = custom_collations;
+        Ok(())
+    }
+
+    #[inline]
+    pub fn compare_text(&self, field_idx: usize, lhs: &str, rhs: &str) -> Ordering {
+        let collation = self.key_info[field_idx].collation;
+        if collation.is_custom() {
+            let callback = self
+                .custom_collations
+                .get(field_idx)
+                .and_then(Option::as_ref)
+                .expect("a custom collation is resolved when the cursor is opened");
+            return crate::Connection::custom_collation_compare(callback, lhs, rhs);
+        }
+        collation.compare_strings(lhs, rhs)
     }
 
     pub fn new_from_index(index: &Index) -> Result<Self, TryReserveError> {
@@ -3146,7 +3186,7 @@ where
         let key_info = &index_info.key_info[field_idx];
         let comparison = match (&lhs_value, rhs_value) {
             (ValueRef::Text(lhs_text), ValueRef::Text(rhs_text)) => {
-                key_info.collation.compare_strings(lhs_text, rhs_text)
+                index_info.compare_text(field_idx, lhs_text, rhs_text)
             }
             _ => lhs_value.cmp(rhs_value),
         };

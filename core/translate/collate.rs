@@ -163,7 +163,7 @@ impl CollationSeq {
             Self::Locale(id) => LocaleCollationRegistry::global().compare(id, lhs, rhs),
             // Immutable comparison paths have no connection to fetch the external
             // callback from. Runtime VDBE paths dispatch custom collations via
-            // `Connection`; schema/index paths reject them before storage.
+            // `Connection`, index and WITHOUT ROWID btrees via `IndexInfo::compare_text`.
             Self::Custom(_) => Self::binary_cmp(lhs, rhs),
         }
     }

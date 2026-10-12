@@ -981,15 +981,7 @@ fn extract_collation<'a>(
             Expr::Collate(inner, seq) => {
                 if coll.is_none() {
                     let collation = match resolver {
-                        Some(resolver) => {
-                            let collation = resolver.resolve_collation(seq.as_str())?;
-                            if collation.is_custom() {
-                                crate::bail_parse_error!(
-                                    "custom collations are not supported in indexes"
-                                );
-                            }
-                            collation
-                        }
+                        Some(resolver) => resolver.resolve_collation(seq.as_str())?,
                         None => CollationSeq::from_schema(seq.as_str()),
                     };
                     coll = Some(collation);
