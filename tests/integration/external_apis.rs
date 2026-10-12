@@ -1045,6 +1045,77 @@ fn custom_collations_cover_dotnet_create_collation_cases(
     Ok(())
 }
 
+#[turso_macros::test]
+#[serial]
+fn custom_collation_unique_index_rejects_duplicates_that_compare_equal(
+    tmp_db: TempDatabase,
+) -> anyhow::Result<()> {
+    let conn = tmp_db.connect_limbo();
+    conn.register_external_collation(
+        "dotnet_nocase".to_string(),
+        0,
+        dotnet_nocase_collation,
+        None,
+    );
+    conn.execute("CREATE TABLE t(value TEXT, UNIQUE(value COLLATE dotnet_nocase))")?;
+    conn.execute("INSERT INTO t VALUES ('alpha')")?;
+    assert_that!(conn.execute("INSERT INTO t VALUES ('ALPHA')"))
+        .is_err()
+        .err()
+        .display_string()
+        .contains("UNIQUE constraint failed");
+    let rows: Vec<(String,)> = conn.exec_rows("SELECT value FROM t");
+    assert_eq!(rows, vec![("alpha".to_string(),)]);
+    Ok(())
+}
+
+#[turso_macros::test]
+#[serial]
+fn custom_collation_create_unique_index_finds_duplicates_that_compare_equal(
+    tmp_db: TempDatabase,
+) -> anyhow::Result<()> {
+    let conn = tmp_db.connect_limbo();
+    conn.register_external_collation(
+        "dotnet_nocase".to_string(),
+        0,
+        dotnet_nocase_collation,
+        None,
+    );
+    conn.execute("CREATE TABLE t(value TEXT)")?;
+    conn.execute("INSERT INTO t VALUES ('alpha'), ('beta'), ('ALPHA')")?;
+    assert_that!(conn.execute("CREATE UNIQUE INDEX t_value ON t(value COLLATE dotnet_nocase)"))
+        .is_err()
+        .err()
+        .display_string()
+        .contains("UNIQUE constraint failed");
+    Ok(())
+}
+
+#[turso_macros::test]
+#[serial]
+fn custom_collation_index_update_to_equal_value_keeps_one_entry(
+    tmp_db: TempDatabase,
+) -> anyhow::Result<()> {
+    let conn = tmp_db.connect_limbo();
+    conn.register_external_collation(
+        "dotnet_nocase".to_string(),
+        0,
+        dotnet_nocase_collation,
+        None,
+    );
+    conn.execute("CREATE TABLE t(value TEXT)")?;
+    conn.execute("CREATE INDEX t_value ON t(value COLLATE dotnet_nocase)")?;
+    conn.execute("INSERT INTO t VALUES ('alpha')")?;
+    conn.execute("UPDATE t SET value = 'ALPHA'")?;
+    let rows: Vec<(String,)> = conn.exec_rows(
+        "SELECT value FROM t INDEXED BY t_value WHERE value = 'alpha' COLLATE dotnet_nocase",
+    );
+    assert_eq!(rows, vec![("ALPHA".to_string(),)]);
+    let integrity: Vec<(String,)> = conn.exec_rows("PRAGMA integrity_check");
+    assert_eq!(integrity, vec![("ok".to_string(),)]);
+    Ok(())
+}
+
 static TRACKED_DOUBLE_DESTROYS: AtomicUsize = AtomicUsize::new(0);
 static TRACKED_CALLS_AFTER_DESTROY: AtomicUsize = AtomicUsize::new(0);
 

@@ -9555,12 +9555,7 @@ pub fn op_sorter_compare(
     let is_equal = current_sorter_values
         .iter()
         .all(|v| !matches!(v, ValueRef::Null))
-        && compare_immutable(
-            previous_sorter_values,
-            current_sorter_values,
-            &cursor.index_key_info,
-        )
-        .is_eq();
+        && cursor.keys_are_equal(previous_sorter_values, current_sorter_values)?;
     if is_equal {
         state.pc += 1;
     } else {

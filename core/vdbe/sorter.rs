@@ -373,6 +373,19 @@ impl Sorter {
         current
     }
 
+    pub fn keys_are_equal(&self, lhs: &[ValueRef], rhs: &[ValueRef]) -> Result<bool> {
+        for (i, (left, right)) in lhs.iter().zip(rhs).enumerate() {
+            let ordering = match self.comparators.get(i) {
+                Some(Some(comparator)) => comparator(left, right)?,
+                _ => cmp_in_column(left, right, &self.index_key_info[i]),
+            };
+            if ordering != Ordering::Equal {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
     pub fn insert(&mut self, record: &ImmutableRecord) -> IOResultOr<()> {
         let payload_size = record.get_payload().len();
         loop {
