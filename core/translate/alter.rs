@@ -1261,6 +1261,7 @@ pub fn translate_alter_table(
                 }
             }
             let constraints = col_def.constraints.clone();
+            validate_column_collations(&col_def, resolver)?;
             let mut column = Column::from_definition(
                 &col_def,
                 FromDefinitionFlags::empty()
@@ -1871,6 +1872,7 @@ pub fn translate_alter_table(
                 match rename {
                     true => (false, false, None),
                     false => {
+                        validate_column_collations(&definition, resolver)?;
                         let replacement_column = Column::from_definition(
                             &definition,
                             FromDefinitionFlags::empty()
@@ -2348,6 +2350,18 @@ pub fn translate_alter_table(
         }
     };
 
+    Ok(())
+}
+
+fn validate_column_collations(
+    definition: &ast::ColumnDefinition,
+    resolver: &Resolver,
+) -> Result<()> {
+    for constraint in &definition.constraints {
+        if let ast::ColumnConstraint::Collate { collation_name } = &constraint.constraint {
+            crate::translate::schema::validate_collation(collation_name.as_str(), resolver)?;
+        }
+    }
     Ok(())
 }
 

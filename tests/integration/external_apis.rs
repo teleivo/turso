@@ -1047,6 +1047,40 @@ fn custom_collations_cover_dotnet_create_collation_cases(
 
 #[turso_macros::test]
 #[serial]
+fn custom_collation_in_alter_table_column_definitions(tmp_db: TempDatabase) -> anyhow::Result<()> {
+    let conn = tmp_db.connect_limbo();
+    conn.register_external_collation(
+        "dotnet_nocase".to_string(),
+        0,
+        dotnet_nocase_collation,
+        None,
+    );
+    conn.execute("CREATE TABLE t(a TEXT)")?;
+    conn.execute("INSERT INTO t VALUES ('alpha')")?;
+
+    conn.execute("ALTER TABLE t ADD COLUMN b TEXT COLLATE dotnet_nocase")?;
+    conn.execute("UPDATE t SET b = a")?;
+    let rows: Vec<(String,)> = conn.exec_rows("SELECT b FROM t WHERE b = 'ALPHA'");
+    assert_eq!(rows, vec![("alpha".to_string(),)]);
+    assert_that!(conn.execute("ALTER TABLE t ADD COLUMN c TEXT COLLATE bogus"))
+        .is_err()
+        .err()
+        .display_string()
+        .contains("no such collation sequence: bogus");
+
+    conn.execute("ALTER TABLE t ALTER COLUMN a TO d TEXT COLLATE dotnet_nocase")?;
+    let rows: Vec<(String,)> = conn.exec_rows("SELECT d FROM t WHERE d = 'ALPHA'");
+    assert_eq!(rows, vec![("alpha".to_string(),)]);
+    assert_that!(conn.execute("ALTER TABLE t ALTER COLUMN d TO e TEXT COLLATE bogus"))
+        .is_err()
+        .err()
+        .display_string()
+        .contains("no such collation sequence: bogus");
+    Ok(())
+}
+
+#[turso_macros::test]
+#[serial]
 fn custom_collation_unique_index_rejects_duplicates_that_compare_equal(
     tmp_db: TempDatabase,
 ) -> anyhow::Result<()> {

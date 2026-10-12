@@ -5594,13 +5594,7 @@ impl Column {
                     );
                 }
                 ast::ColumnConstraint::Collate { collation_name } => {
-                    let collation_seq = CollationSeq::new(collation_name.as_str())?;
-                    if collation_seq.is_custom() {
-                        crate::bail_parse_error!(
-                            "custom collations are not supported in schema definitions"
-                        );
-                    }
-                    collation.replace(collation_seq);
+                    collation.replace(CollationSeq::from_schema(collation_name.as_str()));
                 }
                 ast::ColumnConstraint::Generated { expr, .. } => {
                     generated = Some(expr.clone());

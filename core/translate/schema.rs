@@ -903,7 +903,7 @@ fn validate(
     Ok(())
 }
 
-fn validate_collation(name: &str, resolver: &Resolver) -> Result<()> {
+pub(crate) fn validate_collation(name: &str, resolver: &Resolver) -> Result<()> {
     resolver.resolve_collation(name)?;
     Ok(())
 }
