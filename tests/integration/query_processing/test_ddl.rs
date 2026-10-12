@@ -545,6 +545,40 @@ fn test_without_rowid_key_uses_primary_key_collation_over_column_collation() -> 
     Ok(())
 }
 
+#[test]
+fn test_without_rowid_key_uses_primary_key_constraint_collation() -> anyhow::Result<()> {
+    let tmp_dir = tempfile::TempDir::new()?;
+    let db_path = tmp_dir.path().join("without_rowid.db");
+    let sqlite = rusqlite::Connection::open(&db_path)?;
+    sqlite.execute_batch(
+        "CREATE TABLE w(a TEXT, b, PRIMARY KEY(a COLLATE nocase)) WITHOUT ROWID;
+         INSERT INTO w VALUES ('a', 1), ('C', 2), ('e', 3);",
+    )?;
+    drop(sqlite);
+    let db = TempDatabase::builder().with_db_path(&db_path).build();
+    let conn = db.connect_limbo();
+
+    conn.execute("INSERT INTO w VALUES ('B', 4)")?;
+    assert_that!(conn.execute("INSERT INTO w VALUES ('A', 5)"))
+        .is_err()
+        .err()
+        .display_string()
+        .contains("UNIQUE constraint failed: w.a");
+    let rows: Vec<(String,)> = conn.exec_rows("SELECT a FROM w");
+    assert_eq!(
+        rows,
+        vec![
+            ("a".to_string(),),
+            ("B".to_string(),),
+            ("C".to_string(),),
+            ("e".to_string(),)
+        ]
+    );
+    drop(conn);
+    rusqlite_integrity_check(&db_path)?;
+    Ok(())
+}
+
 unsafe extern "C" fn reverse_collation(
     _context: usize,
     left_ptr: *const u8,
