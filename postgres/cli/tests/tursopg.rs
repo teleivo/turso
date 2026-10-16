@@ -1552,3 +1552,39 @@ fn schema_sidecar_reattaches_on_reopen() {
         "expected 'persisted' in output, got: {out}"
     );
 }
+
+#[test]
+fn column_collation_is_kept_on_reopen() {
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let test_dir = std::env::temp_dir().join(format!("tursopg_collation_reopen_{timestamp}"));
+    std::fs::create_dir(&test_dir).expect("failed to create temp test directory");
+    let db_path = test_dir.join("main.db");
+    let sorted = b"SELECT string_agg(a, ',') FROM (SELECT a FROM t1 ORDER BY a) AS t2;\n";
+
+    let create = run_tursopg_with_db(
+        &db_path,
+        b"CREATE TABLE t1 (a text COLLATE \"de-x-icu\");\n\
+          INSERT INTO t1 VALUES ('b'), ('A'), ('a'), ('B');\n",
+    );
+    let after_create = run_tursopg_with_db(&db_path, sorted);
+    let alter = run_tursopg_with_db(&db_path, b"ALTER TABLE t1 ADD COLUMN b int;\n");
+    let after_alter = run_tursopg_with_db(&db_path, sorted);
+
+    std::fs::remove_dir_all(&test_dir).ok();
+
+    assert_eq!(create.status.code(), Some(0), "{}", stdout(&create));
+    assert!(
+        stdout(&after_create).contains("a,A,b,B"),
+        "{}",
+        stdout(&after_create)
+    );
+    assert_eq!(alter.status.code(), Some(0), "{}", stdout(&alter));
+    assert!(
+        stdout(&after_alter).contains("a,A,b,B"),
+        "{}",
+        stdout(&after_alter)
+    );
+}

@@ -1,0 +1,186 @@
+# The default collation differs between servers, so every test that sorts or
+# compares mixed case text names its collation.
+
+@database :memory:
+
+setup t1 {
+    CREATE TABLE t1 (a text);
+    INSERT INTO t1 VALUES ('b'), ('A'), ('a'), ('B');
+}
+
+setup t2 {
+    CREATE TABLE t2 (a text COLLATE "de-x-icu");
+    INSERT INTO t2 VALUES ('b'), ('A'), ('a'), ('B');
+}
+
+@setup t1
+test collate-c {
+    SELECT a FROM t1 ORDER BY a COLLATE "C";
+}
+expect {
+    A
+    B
+    a
+    b
+}
+
+@setup t1
+test collate-posix {
+    SELECT a FROM t1 ORDER BY a COLLATE "POSIX";
+}
+expect {
+    A
+    B
+    a
+    b
+}
+
+@setup t1
+test collate-ucs-basic {
+    SELECT a FROM t1 ORDER BY a COLLATE ucs_basic;
+}
+expect {
+    A
+    B
+    a
+    b
+}
+
+@setup t1
+test collate-default {
+    SELECT a FROM t1 WHERE a IN ('a', 'b') ORDER BY a COLLATE "default";
+}
+expect {
+    a
+    b
+}
+
+@setup t1
+test collate-icu {
+    SELECT a FROM t1 ORDER BY a COLLATE "de-x-icu";
+}
+expect {
+    a
+    A
+    b
+    B
+}
+
+@setup t1
+test collate-unicode {
+    SELECT a FROM t1 ORDER BY a COLLATE "unicode";
+}
+expect {
+    a
+    A
+    b
+    B
+}
+
+@setup t1
+test collate-pg-catalog-schema {
+    SELECT a FROM t1 ORDER BY a COLLATE pg_catalog."de-x-icu";
+}
+expect {
+    a
+    A
+    b
+    B
+}
+
+@setup t1
+test collate-comparison {
+    SELECT a FROM t1 WHERE a > 'a' COLLATE "de-x-icu" ORDER BY a COLLATE "C";
+}
+expect {
+    A
+    B
+    b
+}
+
+@setup t1
+test collate-index {
+    CREATE INDEX i1 ON t1 (a COLLATE "de-x-icu");
+    SELECT a FROM t1 WHERE a > 'a' COLLATE "de-x-icu" ORDER BY a COLLATE "de-x-icu";
+}
+expect {
+    A
+    b
+    B
+}
+
+@setup t2
+test collate-column {
+    SELECT a FROM t2 ORDER BY a;
+}
+expect {
+    a
+    A
+    b
+    B
+}
+
+@setup t2
+test collate-column-comparison {
+    SELECT a FROM t2 WHERE a > 'a' ORDER BY a;
+}
+expect {
+    A
+    b
+    B
+}
+
+@setup t2
+test collate-column-index {
+    CREATE INDEX i1 ON t2 (a);
+    SELECT a FROM t2 WHERE a > 'a' ORDER BY a;
+}
+expect {
+    A
+    b
+    B
+}
+
+@setup t2
+test collate-explicit-wins-over-column {
+    SELECT a FROM t2 ORDER BY a COLLATE "C";
+}
+expect {
+    A
+    B
+    a
+    b
+}
+
+@setup t1
+test collate-alter-table-add-column {
+    ALTER TABLE t1 ADD COLUMN b text COLLATE "de-x-icu";
+    UPDATE t1 SET b = a;
+    SELECT b FROM t1 ORDER BY b;
+}
+expect {
+    a
+    A
+    b
+    B
+}
+
+test collate-unknown-name {
+    SELECT 'a' COLLATE "nosuch";
+}
+expect error {}
+
+test collate-locale-without-icu-suffix {
+    SELECT 'a' COLLATE "de";
+}
+expect error {}
+
+test collate-name-is-case-sensitive {
+    SELECT 'a' COLLATE c;
+}
+expect error {}
+
+test collate-unknown-schema {
+    SELECT 'a' COLLATE public."C";
+}
+expect error {}

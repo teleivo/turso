@@ -508,11 +508,11 @@ Upgrade is not supported.
 |---------|--------|-------|
 | Built-in, platform independent immutable collation | ❌ Not supported | |
 | casefold | ❌ Not supported | |
-| Column-level collation support | ❌ Not supported | COLLATE clauses silently stripped |
+| Column-level collation support | 🟡 Partial | `default`, `C`, `POSIX`, `ucs_basic`, `unicode` and ICU `<tag>-x-icu` names in columns, indexes and expressions; no `CREATE COLLATION` |
 | Database level collation | ❌ Not supported | |
 | Default ICU collations for clusters/databases | ❌ Not supported | |
 | EUC_JIS_2004 / SHIFT_JIS_2004 support | ❌ Not supported | |
-| ICU collations | ❌ Not supported | |
+| ICU collations | 🟡 Partial | `unicode` and `<tag>-x-icu` names; strings that ICU sorts as equal compare as equal even when their bytes differ |
 | LIKE comparisons for nondeterministic collations | ❌ Not supported | |
 | Multibyte encoding support, incl. UTF8 | 🟡 Partial | UTF-8 only (Turso native encoding); no other server encodings |
 | Multiple language support | ❌ Not supported | |

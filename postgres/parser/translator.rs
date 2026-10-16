@@ -541,6 +541,10 @@ impl PostgreSQLTranslator {
 
         constraints.extend(check_constraints);
 
+        if let Some(collate) = &col_def.coll_clause {
+            constraints.push(translate_column_collation(collate)?);
+        }
+
         Ok(ast::ColumnDefinition {
             col_name: ast::Name::from_string(name),
             col_type,
@@ -849,6 +853,10 @@ impl PostgreSQLTranslator {
             }
         }
 
+        if let Some(collate) = &col_def.coll_clause {
+            constraints.push(translate_column_collation(collate)?);
+        }
+
         Ok(ast::ColumnDefinition {
             col_name,
             col_type,
@@ -875,7 +883,7 @@ impl PostgreSQLTranslator {
             let Some(Node::IndexElem(elem)) = &param_node.node else {
                 continue;
             };
-            let expr = if !elem.name.is_empty() {
+            let mut expr = if !elem.name.is_empty() {
                 Box::new(ast::Expr::Id(ast::Name::from_string(&elem.name)))
             } else if let Some(ref expr_node) = elem.expr {
                 Box::new(self.translate_expr(expr_node)?)
@@ -884,6 +892,12 @@ impl PostgreSQLTranslator {
                     "CREATE INDEX: index element has no name or expression".into(),
                 ));
             };
+            if !elem.collation.is_empty() {
+                expr = Box::new(ast::Expr::Collate(
+                    expr,
+                    translate_collation_name(&elem.collation)?,
+                ));
+            }
 
             let order = match pg_query::protobuf::SortByDir::try_from(elem.ordering) {
                 Ok(pg_query::protobuf::SortByDir::SortbyAsc) => Some(ast::SortOrder::Asc),
@@ -2215,14 +2229,13 @@ impl PostgreSQLTranslator {
                 self.translate_case_expr(case_expr)
             }
             Some(pg_query::protobuf::node::Node::CollateClause(collate)) => {
-                // Strip COLLATE clause, just translate the inner expression
-                if let Some(arg) = &collate.arg {
-                    self.translate_expr(arg)
-                } else {
-                    Err(ParseError::ParseError(
-                        "COLLATE clause missing inner expression".to_string(),
-                    ))
-                }
+                let arg = collate.arg.as_ref().ok_or_else(|| {
+                    ParseError::ParseError("COLLATE clause missing inner expression".to_string())
+                })?;
+                Ok(ast::Expr::Collate(
+                    Box::new(self.translate_expr(arg)?),
+                    translate_collation_name(&collate.collname)?,
+                ))
             }
             Some(pg_query::protobuf::node::Node::TypeCast(type_cast)) => {
                 let arg = type_cast.arg.as_ref().ok_or_else(|| {
@@ -4586,6 +4599,48 @@ fn extract_integer_typmods(col_def: &pg_query::protobuf::ColumnDef) -> Vec<i64> 
             _ => None,
         })
         .collect()
+}
+
+fn translate_column_collation(
+    collate: &pg_query::protobuf::CollateClause,
+) -> Result<ast::NamedColumnConstraint, ParseError> {
+    Ok(ast::NamedColumnConstraint {
+        name: None,
+        constraint: ast::ColumnConstraint::Collate {
+            collation_name: translate_collation_name(&collate.collname)?,
+        },
+    })
+}
+
+fn translate_collation_name(
+    collname: &[pg_query::protobuf::Node],
+) -> Result<ast::Name, ParseError> {
+    use pg_query::protobuf::node::Node;
+
+    let parts: Vec<&str> = collname
+        .iter()
+        .filter_map(|part| match &part.node {
+            Some(Node::String(s)) => Some(s.sval.as_str()),
+            _ => None,
+        })
+        .collect();
+    let core_name = match parts.as_slice() {
+        [name] | ["pg_catalog", name] => match *name {
+            "default" | "C" | "POSIX" | "ucs_basic" => Some("BINARY"),
+            "unicode" => Some("und"),
+            icu_name if icu_name.ends_with("-x-icu") => Some(icu_name),
+            _ => None,
+        },
+        _ => None,
+    };
+    core_name
+        .map(|name| ast::Name::exact(name.to_string()))
+        .ok_or_else(|| {
+            ParseError::ParseError(format!(
+                "collation \"{}\" for encoding \"UTF8\" does not exist",
+                parts.join(".")
+            ))
+        })
 }
 
 fn extract_key_columns(keys: &[pg_query::protobuf::Node]) -> Result<Vec<String>, ParseError> {
