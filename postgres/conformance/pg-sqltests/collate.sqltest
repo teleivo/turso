@@ -184,3 +184,25 @@ test collate-unknown-schema {
     SELECT 'a' COLLATE public."C";
 }
 expect error {}
+
+test collate-text-types {
+    CREATE TABLE t3 (a varchar(5) COLLATE "C", b char(1) COLLATE "C", c text[] COLLATE "C");
+}
+expect {
+}
+
+test collate-integer-column {
+    CREATE TABLE t3 (a int COLLATE "C");
+}
+expect error {}
+
+test collate-integer-array-column {
+    CREATE TABLE t3 (a int[] COLLATE "C");
+}
+expect error {}
+
+@setup t1
+test collate-alter-table-add-integer-column {
+    ALTER TABLE t1 ADD COLUMN b int COLLATE "C";
+}
+expect error {}

@@ -542,7 +542,7 @@ impl PostgreSQLTranslator {
         constraints.extend(check_constraints);
 
         if let Some(collate) = &col_def.coll_clause {
-            constraints.push(translate_column_collation(collate)?);
+            constraints.push(translate_column_collation(&pg_type, collate)?);
         }
 
         Ok(ast::ColumnDefinition {
@@ -854,7 +854,7 @@ impl PostgreSQLTranslator {
         }
 
         if let Some(collate) = &col_def.coll_clause {
-            constraints.push(translate_column_collation(collate)?);
+            constraints.push(translate_column_collation(&pg_type, collate)?);
         }
 
         Ok(ast::ColumnDefinition {
@@ -4602,14 +4602,87 @@ fn extract_integer_typmods(col_def: &pg_query::protobuf::ColumnDef) -> Vec<i64> 
 }
 
 fn translate_column_collation(
+    pg_type: &str,
     collate: &pg_query::protobuf::CollateClause,
 ) -> Result<ast::NamedColumnConstraint, ParseError> {
+    if !type_supports_collation(pg_type) {
+        return Err(ParseError::ParseError(format!(
+            "collations are not supported by type {pg_type}"
+        )));
+    }
     Ok(ast::NamedColumnConstraint {
         name: None,
         constraint: ast::ColumnConstraint::Collate {
             collation_name: translate_collation_name(&collate.collname)?,
         },
     })
+}
+
+fn type_supports_collation(pg_type: &str) -> bool {
+    let element_type = pg_type.trim_end_matches("[]").to_uppercase();
+    !matches!(
+        element_type.as_str(),
+        "BOOLEAN"
+            | "BOOL"
+            | "SMALLINT"
+            | "INT2"
+            | "INTEGER"
+            | "INT"
+            | "INT4"
+            | "BIGINT"
+            | "INT8"
+            | "SERIAL"
+            | "SERIAL4"
+            | "BIGSERIAL"
+            | "SERIAL8"
+            | "SMALLSERIAL"
+            | "SERIAL2"
+            | "NUMERIC"
+            | "DECIMAL"
+            | "REAL"
+            | "FLOAT4"
+            | "DOUBLE PRECISION"
+            | "FLOAT8"
+            | "MONEY"
+            | "UUID"
+            | "DATE"
+            | "TIME"
+            | "TIMETZ"
+            | "TIMESTAMP"
+            | "TIMESTAMPTZ"
+            | "INTERVAL"
+            | "BYTEA"
+            | "JSON"
+            | "JSONB"
+            | "XML"
+            | "INET"
+            | "CIDR"
+            | "MACADDR"
+            | "MACADDR8"
+            | "POINT"
+            | "LINE"
+            | "LSEG"
+            | "BOX"
+            | "PATH"
+            | "POLYGON"
+            | "CIRCLE"
+            | "TSVECTOR"
+            | "TSQUERY"
+            | "BIT"
+            | "VARBIT"
+            | "OID"
+            | "REGCLASS"
+            | "REGTYPE"
+            | "REGPROC"
+            | "REGPROCEDURE"
+            | "REGOPER"
+            | "REGOPERATOR"
+            | "REGCONFIG"
+            | "REGDICTIONARY"
+            | "REGNAMESPACE"
+            | "REGROLE"
+            | "VOID"
+    )
 }
 
 fn translate_collation_name(
